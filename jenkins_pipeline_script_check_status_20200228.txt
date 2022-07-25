@@ -1,0 +1,124 @@
+/*
+20/02/2021
+---
+ssh-keygen -t rsa
+cat ~/.ssh/id_rsa.pub  >>  ~/.ssh/authorized_keys
+---
+
+Jenkins->Credentials->Add credentials->Kind: SSH Username with private key:
+ID: <whatever string>
+Private key: <target host private ssh key>
+Username: <target user name on designated host>
+---
+FYI:
+git ls-remote ssh://git@x.x.x.x:8878/xxxx/xxx_deployment.git refs/heads/DEBUG_DEVOPS_CD
+git clone  --branch DEBUG_DEVOPS_CD ssh://git@x.x.x.x:8878/xxxinvestor/xxx_deployment.git
+git checkout origin/DEBUG_DEVOPS_CD -- libs/libs.groovy
+*/
+
+ 
+
+def mailList = "tvplakhotnichenko@xxx.ru"
+//def mailList = "tvplakhotnichenko@xxx.ru,xxx@xxx.ru"
+def services = []
+services = [
+    "x.x.x.x:name1.service",
+    //"x.x.x:name2.service",
+    //------------------------------------------
+    "x.x.x.x:name3.service",
+    "x.x.x.x:name4.service",
+    //------------------------------------------
+    "x.x.x.x:xxx-scheduler.service",
+    "x.x.x.x:xxx-webserver.service",
+    "x.x.x.x:xxx.service"
+    
+    ]
+
+node('masterLin') {
+currentBuild.result = 'SUCCESS'
+
+try {
+    //stage('Checkout') {
+    //   cleanWs()
+       //Pipeline: SCM Stepplugin
+    //   checkout([
+    //     $class: 'GitSCM',
+    //     branches: [[name: '*/DEBUG_DEVOPS_CD']],
+    //     doGenerateSubmoduleConfigurations: false,
+    //     extensions: [],
+    //     submoduleCfg: [],
+    //     userRemoteConfigs: [[
+    //     name: 'origin',
+    //     refspec: '+refs/heads/DEBUG_DEVOPS_CD:refs/remotes/origin/DEBUG_DEVOPS_CD',
+    //     credentialsId: 'xxxDevops',                        
+    //     url: 'ssh://git@x.x.x.x:8878/xxxinvestor/xxx_deployment.git'
+    //    ]]
+    //   ])
+    // }
+
+
+    stage ('Checking service state') {  
+        sh 'ls ${WORKSPACE}'
+        withCredentials([sshUserPrivateKey(credentialsId: 'devops_ssh_key_114', keyFileVariable: 'identity', passphraseVariable: '', usernameVariable: 'DEVOPS_LOGIN')]) {
+                                            //systemctl is-active --quiet  postfix.service
+                                            //ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null devops@x.x.x.x   systemctl show -p SubState postfix.service
+
+                                            def finalResult = [:]
+                                            services.each{
+                                            def (host, service) = it.split(':')    
+                                             //sh "ssh -q -o 'StrictHostKeyChecking=no' -o 'UserKnownHostsFile=/dev/null'  devops@" + host  + " -i "  +  identity  + " systemctl show -p SubState " +  service
+                                             def outfile = 'stdout.out'
+                                             status = sh (
+                                             script: "ssh -q -o 'StrictHostKeyChecking=no' -o 'UserKnownHostsFile=/dev/null'  devops@" + host  + " -i "  +  identity  + " systemctl show -p SubState " +  service  + " >${outfile} 2>&1",
+                                             returnStatus: true
+                                             )
+                                            def output = readFile(outfile).trim()
+                                            finalResult.put(host + ":" + service, output)
+                                            }
+											
+                                            //println  finalResult
+                                            def details = "https://xxx.xxx.ru/wiki/pages/viewpage.action?pageId=1142260696<br><br><table><head>"
+                                            resultBuild = 'SUCCESS'
+                                            flag = ""
+                                            finalResult.each{ asset, output  ->
+                                                if (output =~ /\=running$/) {
+                                                               print resultBuild + " " + asset + " " + output
+                                                               details = details + '<TR><TD align = left bgcolor=\"#C0C0C0\">' + asset +  '</TD><TD  bgcolor=#32CD32>' + output + '</TD></TR>'
+                                                } else
+                                                {
+                                                   println resultBuild + " " + asset + " " + output
+                                                   flag = "1"
+                                                   details = details + '<TR><TD align = left bgcolor=\"#C0C0C0\">' + asset +  '</TD><TD  bgcolor=#FA5858>' + output + '</TD></TR>'
+                                                   resultBuild = 'FAILURE'
+                                                }
+                                            }
+                                            details = details + '</head></table>'
+                                            if (flag == '1') {
+                                             emailext (
+                                             mimeType: 'text/html',
+                                             subject: '[Failure]  DEV xxx - обнаружены незапущенные службы!',
+                                             body: details,
+                                             to: mailList
+                                            )
+                                            }
+                                            else
+                                            {
+                                             emailext (
+                                             mimeType: 'text/html',
+                                             subject: '[OK] DEV xxx',
+                                             body: details,
+                                             to: mailList
+                                            )
+                                            }
+            }
+    }
+    }
+    catch(err) {
+     currentBuild.result = 'FAILURE'
+     echo '---'
+     throw err
+   }
+   finally {
+     echo '+++.'
+   } 
+}
